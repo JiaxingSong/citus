@@ -367,7 +367,7 @@ CitusExecScan(CustomScanState *node)
 }
 
 
-void
+uint64
 ExecuteTaskList(CmdType operation, List *taskList)
 {
 	DistributedPlan *distributedPlan = NULL;
@@ -390,6 +390,8 @@ ExecuteTaskList(CmdType operation, List *taskList)
 	StartDistributedExecution(execution);
 	RunDistributedExecution(execution);
 	FinishDistributedExecution(execution);
+
+	return execution->rowCount;
 }
 
 
@@ -1609,19 +1611,25 @@ ReceiveResults(WorkerSession *session, bool storeRows)
 		{
 			char *currentAffectedTupleString = PQcmdTuples(result);
 			int64 currentAffectedTupleCount = 0;
+			ShardCommandExecution *shardCommandExecution =
+				session->currentTask->shardCommandExecution;
 
-			if (*currentAffectedTupleString != '\0')
+			/* if there are multiple replicas, make sure to consider only one */
+			if (!shardCommandExecution->gotResults && *currentAffectedTupleString != '\0')
 			{
 				scanint8(currentAffectedTupleString, false, &currentAffectedTupleCount);
 				Assert(currentAffectedTupleCount >= 0);
+
+				execution->rowCount += currentAffectedTupleCount;
 			}
 
-			execution->rowCount += currentAffectedTupleCount;
+			/* no more results */
 			return true;
 		}
 		if (resultStatus == PGRES_TUPLES_OK)
 		{
-			execution->rowCount += PQntuples(result);
+			/* we've already consumed all the tuples, no more results */
+			Assert (PQntuples(result) == 0);
 			return true;
 		}
 		else if (resultStatus != PGRES_SINGLE_TUPLE)
